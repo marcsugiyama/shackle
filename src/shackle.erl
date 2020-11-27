@@ -51,6 +51,7 @@ cast(PoolName, Request, Pid, Timeout) ->
     Timestamp = os:timestamp(),
     case shackle_pool:server(PoolName) of
         {ok, Client, Server} ->
+            ?METRICS(Client, counter, <<"cast">>),
             RequestId = {Server, make_ref()},
             Server ! {Request, #cast {
                 client = Client,
