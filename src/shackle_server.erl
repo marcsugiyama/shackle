@@ -113,6 +113,7 @@ handle_msg({Request, #cast {
                     end,
                     {ok, {State, ClientState2}};
                 {error, Reason} ->
+                    ?METRICS(Client, counter, <<"error.send">>),
                     ?WARN(PoolName, "send error: ~p", [Reason]),
                     Protocol:close(Socket),
                     reply({error, socket_closed}, Cast, State),
@@ -120,6 +121,7 @@ handle_msg({Request, #cast {
             end
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
+            ?METRICS(Client, counter, <<"crash.request">>),
             ?WARN(PoolName, "handle_request crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             reply({error, client_crash}, Cast, State),
@@ -188,15 +190,17 @@ handle_msg({timeout, ExtRequestId}, {#state {
                     process_responses([Reply], State),
                     {ok, {State, ClientState2}};
                 {error, Reason, ClientState2} ->
+                    ?METRICS(Client, counter, <<"error.handle_timeout">>),
                     ?WARN(PoolName, "handle_timeout error: ~p", [Reason]),
                     Protocol:close(Socket),
                     close(State, ClientState2)
             catch
                 ?EXCEPTION(E, R, Stacktrace) ->
+                    ?METRICS(Client, counter, <<"crash.handle_timeout">>),
                     ?WARN(PoolName, "handle_timeout error: ~p:~p~n~p~n",
                         [E, R, ?GET_STACK(Stacktrace)]),
                     Protocol:close(Socket),
-                    close(State, ClientState)
+                    close(client_crash, State, ClientState)
             end;
         false ->
             case shackle_queue:remove(Queue, Id, ExtRequestId) of
@@ -204,14 +208,17 @@ handle_msg({timeout, ExtRequestId}, {#state {
                     ?METRICS(Client, counter, <<"timeout">>),
                     reply({error, timeout}, Cast, State);
                 {error, not_found} ->
+                    ?METRICS(Client, counter, <<"not_found">>, 1),
                     ok
             end,
             {ok, {State, ClientState}}
     end;
 handle_msg(Msg, {#state {
+        client = Client,
         pool_name = PoolName
     } = State, ClientState}) ->
 
+    ?METRICS(Client, counter, <<"error.unknown_msg">>),
     ?WARN(PoolName, "unknown msg: ~p", [Msg]),
     {ok, {State, ClientState}}.
 
@@ -226,9 +233,12 @@ terminate(_Reason, {#state {
     } = State, ClientState}) ->
 
     cancel_timer(TimerRef),
-    try Client:terminate(ClientState)
+    try
+        ?METRICS(Client, counter, <<"debug.terminate">>),
+        Client:terminate(ClientState)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
+            ?METRICS(Client, counter, <<"crash.terminate">>),
             ?WARN(PoolName, "terminate crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)])
     end,
@@ -260,12 +270,15 @@ client(Client, PoolName, InitOptions, Protocol, Socket) ->
 client_init(Client, PoolName, InitOptions) ->
     try Client:init(InitOptions) of
         {ok, ClientState} ->
+            ?METRICS(Client, counter, <<"debug.init">>),
             {ok, ClientState};
         {error, Reason} ->
+            ?METRICS(Client, counter, <<"error.init">>),
             ?WARN(PoolName, "init error: ~p~n", [Reason]),
             {error, Reason}
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
+            ?METRICS(Client, counter, <<"crash.init">>),
             ?WARN(PoolName, "init crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             {error, client_crash}
@@ -275,21 +288,27 @@ client_setup(Client, PoolName, Protocol, Socket, ClientState) ->
     Protocol:setopts(Socket, [{active, false}]),
     try Client:setup(Socket, ClientState) of
         {ok, ClientState2} ->
+            ?METRICS(Client, counter, <<"debug.setup">>),
             Protocol:setopts(Socket, [{active, true}]),
             {ok, ClientState2};
         {error, Reason, ClientState2} ->
+            ?METRICS(Client, counter, <<"error.setup">>),
             ?WARN(PoolName, "setup error: ~p", [Reason]),
             {error, Reason, ClientState2}
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
+            ?METRICS(Client, counter, <<"crash.setup">>),
             ?WARN(PoolName, "handle_data error: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             {error, client_crash, ClientState}
     end.
 
-close(#state {id = Id} = State, ClientState) ->
+close(State, ClientState) ->
+    close(socket_closed, State, ClientState).
+
+close(Reason, #state {id = Id} = State, ClientState) ->
     shackle_status:disable(Id),
-    reply_all({error, socket_closed}, State),
+    reply_all({error, Reason}, State),
     reconnect(State, ClientState).
 
 connect(Protocol, Address, Port, SocketOptions, PoolName) ->
@@ -309,10 +328,12 @@ connect(Protocol, Address, Port, SocketOptions, PoolName) ->
     end.
 
 handle_msg_close(Socket, #state {
+        client = Client,
         socket = Socket,
         pool_name = PoolName
     } = State, ClientState) ->
 
+    ?METRICS(Client, counter, <<"error.connection_closed">>),
     ?WARN(PoolName, "connection closed", []),
     close(State, ClientState);
 handle_msg_close(_Socket, State, ClientState) ->
@@ -331,11 +352,13 @@ handle_msg_data(Socket, Data, #state {
             process_responses(Replies, State),
             {ok, {State, ClientState2}};
         {error, Reason, ClientState2} ->
+            ?METRICS(Client, counter, <<"error.handle_data">>),
             ?WARN(PoolName, "handle_data error: ~p", [Reason]),
             Protocol:close(Socket),
             close(State, ClientState2)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
+            ?METRICS(Client, counter, <<"crash.handle_data">>),
             ?WARN(PoolName, "handle_data crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             Protocol:close(Socket),
@@ -345,11 +368,13 @@ handle_msg_data(_Socket, _Data, State, ClientState) ->
     {ok, {State, ClientState}}.
 
 handle_msg_error(Socket, Reason, #state {
+        client = Client,
         socket = Socket,
         pool_name = PoolName,
         protocol = Protocol
     } = State, ClientState) ->
 
+    ?METRICS(Client, counter, <<"error.connection_error">>),
     ?WARN(PoolName, "connection error: ~p", [Reason]),
     Protocol:close(Socket),
     close(State, ClientState);
@@ -373,7 +398,7 @@ process_responses([{ExtRequestId, Reply} | T], #state {
             erlang:cancel_timer(TimerRef),
             reply(Reply, Cast, State);
         {error, not_found} ->
-            ?METRICS(Client, counter, <<"not_found">>, 1),
+            ?METRICS(Client, counter, <<"not_found">>),
             ok
     end,
     process_responses(T, State).
@@ -385,9 +410,12 @@ reconnect(#state {
         pool_name = PoolName
     } = State, ClientState) ->
 
-    try Client:terminate(ClientState)
+    try
+        ?METRICS(Client, counter, <<"debug.terminate">>),
+        Client:terminate(ClientState)
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
+            ?METRICS(Client, counter, <<"crash.terminate">>),
             ?WARN(PoolName, "terminate crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)])
     end,
