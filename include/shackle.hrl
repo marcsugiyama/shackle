@@ -42,7 +42,7 @@
 -type inet_port() :: inet:port_number().
 -type init_options() :: term().
 -type max_retries() :: non_neg_integer().
--type metric_type() :: counter | timing.
+-type metric_type() :: counter | gauge | timing.
 -type metric_key() :: iodata().
 -type metric_value() :: integer().
 -type pool_name() :: atom().
