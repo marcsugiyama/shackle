@@ -193,7 +193,7 @@ handle_msg({timeout, ExtRequestId}, {#state {
                     close(State, ClientState2)
             catch
                 ?EXCEPTION(E, R, Stacktrace) ->
-                    ?WARN(PoolName, "handle_timeout error: ~p:~p~n~p~n",
+                    ?WARN(PoolName, "handle_timeout crash: ~p:~p~n~p~n",
                         [E, R, ?GET_STACK(Stacktrace)]),
                     Protocol:close(Socket),
                     close(State, ClientState)
@@ -204,6 +204,7 @@ handle_msg({timeout, ExtRequestId}, {#state {
                     ?METRICS(Client, counter, <<"timeout">>),
                     reply({error, timeout}, Cast, State);
                 {error, not_found} ->
+                    ?METRICS(Client, counter, <<"not_found">>, 1),
                     ok
             end,
             {ok, {State, ClientState}}
@@ -282,7 +283,7 @@ client_setup(Client, PoolName, Protocol, Socket, ClientState) ->
             {error, Reason, ClientState2}
     catch
         ?EXCEPTION(E, R, Stacktrace) ->
-            ?WARN(PoolName, "handle_data error: ~p:~p~n~p~n",
+            ?WARN(PoolName, "handle_data crash: ~p:~p~n~p~n",
                 [E, R, ?GET_STACK(Stacktrace)]),
             {error, client_crash, ClientState}
     end.
@@ -315,7 +316,11 @@ handle_msg_close(Socket, #state {
 
     ?WARN(PoolName, "connection closed", []),
     close(State, ClientState);
-handle_msg_close(_Socket, State, ClientState) ->
+handle_msg_close(_Socket, #state {
+        pool_name = PoolName
+    } = State, ClientState) ->
+
+    ?WARN(PoolName, "handle_msg_close error: wrong socket~n", []),
     {ok, {State, ClientState}}.
 
 handle_msg_data(Socket, Data, #state {
@@ -341,7 +346,11 @@ handle_msg_data(Socket, Data, #state {
             Protocol:close(Socket),
             close(State, ClientState)
     end;
-handle_msg_data(_Socket, _Data, State, ClientState) ->
+handle_msg_data(_Socket, _Data, #state {
+        pool_name = PoolName
+    } = State, ClientState) ->
+
+    ?WARN(PoolName, "handle_msg_data error: wrong socket~n", []),
     {ok, {State, ClientState}}.
 
 handle_msg_error(Socket, Reason, #state {
@@ -353,7 +362,11 @@ handle_msg_error(Socket, Reason, #state {
     ?WARN(PoolName, "connection error: ~p", [Reason]),
     Protocol:close(Socket),
     close(State, ClientState);
-handle_msg_error(_Socket, _Reason, State, ClientState) ->
+handle_msg_error(_Socket, _Reason, #state {
+        pool_name = PoolName
+    } = State, ClientState) ->
+
+    ?WARN(PoolName, "handle_msg_error error: wrong socket~n", []),
     {ok, {State, ClientState}}.
 
 process_responses([], _State) ->
