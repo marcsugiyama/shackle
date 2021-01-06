@@ -44,8 +44,9 @@ handle_msg(reload, State) ->
 %% private
 backlog_metrics(_Client, []) ->
     ok;
-backlog_metrics(Client, [{{_PoolName, Index}, Backlog} | T]) ->
-    Key = <<"backlog." , (integer_to_binary(Index))/binary>>,
+backlog_metrics(Client, [{{PoolName, Index}, Backlog} | T]) ->
+    PoolNameBin = atom_to_binary(PoolName, latin1),
+    Key = <<PoolNameBin/binary, ".backlog." , (integer_to_binary(Index))/binary>>,
     ?METRICS(Client, gauge, Key, Backlog),
     backlog_metrics(Client, T).
 
