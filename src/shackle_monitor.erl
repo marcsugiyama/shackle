@@ -48,7 +48,8 @@ backlog_metrics(_Client, []) ->
     ok;
 backlog_metrics(Client, [{{PoolName, Index}, Backlog} | T]) ->
     PoolNameBin = atom_to_binary(PoolName, latin1),
-    Key = <<"backlog.", PoolNameBin/binary, "." , (integer_to_binary(Index))/binary>>,
+    Key = <<"backlog.", PoolNameBin/binary, "." ,
+        (integer_to_binary(Index))/binary>>,
     ?METRICS(Client, gauge, Key, Backlog),
     backlog_metrics(Client, T).
 
