@@ -15,6 +15,8 @@
     timer_ref :: reference()
 }).
 
+-define(RELOAD_INTERVAL, 5000). % 5 seconds
+
 %% public
 -spec start_link(server_name()) ->
     {ok, pid()}.
@@ -64,6 +66,7 @@ backlog_stats() ->
     end, maps:keys(PoolInfo)).
 
 new_timer() ->
-    {_Mega, _Sec, Micro} = os:timestamp(),
-    Delay = trunc((1000000 - Micro) / 1000),
-    erlang:send_after(Delay, self(), reload).
+    {Mega, Sec, Micro} = os:timestamp(),
+    Unix = (Mega * 1000000000 + Sec * 1000) + trunc(Micro / 1000),
+    Delta = Unix rem ?RELOAD_INTERVAL,
+    erlang:send_after(Delta, self(), reload).
