@@ -37,7 +37,10 @@ init(_Name, _Parent, _Opts) ->
     {ok, term()}.
 
 handle_msg(reload, State) ->
-    backlog_stats(),
+    {ok, PoolsInfo} = foil:all(shackle_pool),
+
+    backlog_stats(PoolsInfo),
+    queue_stats(PoolsInfo),
 
     {ok, State#state {
         timer_ref = new_timer()
@@ -46,28 +49,43 @@ handle_msg(reload, State) ->
 %% private
 backlog_metrics(_Client, []) ->
     ok;
-backlog_metrics(Client, [{{PoolName, Index}, Backlog} | T]) ->
-    PoolNameBin = atom_to_binary(PoolName, latin1),
-    Key = <<"backlog.", PoolNameBin/binary, "." ,
-        (integer_to_binary(Index))/binary>>,
+backlog_metrics(Client, [{{Pool, Index}, Backlog} | T]) ->
+    Key = key(Pool, <<"backlog.", (integer_to_binary(Index))/binary>>),
     ?METRICS(Client, gauge, Key, Backlog),
     backlog_metrics(Client, T).
 
-backlog_stats() ->
-    {ok, PoolInfo} = foil:all(shackle_pool),
+backlog_stats(PoolsInfo) ->
     lists:foreach(fun
-        ({PoolName, backlog} = Key) ->
+        ({Pool, backlog} = Key) ->
             #pool_options {
                 client = Client
-            } = maps:get(PoolName, PoolInfo),
-            Table = maps:get(Key, PoolInfo),
+            } = maps:get(Pool, PoolsInfo),
+            Table = maps:get(Key, PoolsInfo),
             backlog_metrics(Client, ets:tab2list(Table));
         (_) ->
             ok
-    end, maps:keys(PoolInfo)).
+    end, maps:keys(PoolsInfo)).
+
+key(Pool, Metric) ->
+    PoolBin = atom_to_binary(Pool, latin1),
+    <<"monitor.", PoolBin/binary, ".", Metric/binary>>.
 
 new_timer() ->
     {Mega, Sec, Micro} = os:timestamp(),
     Unix = (Mega * 1000000000 + Sec * 1000) + trunc(Micro / 1000),
     Delta = Unix rem ?RELOAD_INTERVAL,
     erlang:send_after(Delta, self(), reload).
+
+queue_stats(PoolsInfo) ->
+    lists:foreach(fun (Pool) ->
+        #pool_options {
+            client = Client
+        } = maps:get(Pool, PoolsInfo),
+        Table = queue_table_name(Pool),
+        Size = ets:info(Table, size),
+        Key = key(Pool, <<"queue">>),
+        ?METRICS(Client, gauge, Key, Size)
+    end, maps:keys(PoolsInfo)).
+
+queue_table_name(PoolName) ->
+    list_to_atom("shackle_queue_" ++ atom_to_list(PoolName)).
